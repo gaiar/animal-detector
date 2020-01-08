@@ -12,6 +12,9 @@ import tensorflow as tf
 
 THREASHOLD = 0.5
 
+# Don't enable. Makes things worse.
+ENABLE_ENCHANCER = False
+
 
 def get_output_file(input_file):
     return Path(PurePath(input_file).stem + ".avi")
@@ -54,7 +57,7 @@ clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 wb = cv.xphoto.createSimpleWB()
 wb.setP(0.3)
 
-FILE_INPUT = "squirrel_2.mp4"
+FILE_INPUT = "cat_2.mp4"
 FILE_OUTPUT = get_output_file(FILE_INPUT)
 
 # Checks and deletes the output file
@@ -71,7 +74,7 @@ frame_width = int(cap.get(3))
 frame_height = int(cap.get(4))
 
 # Define the codec and create VideoWriter object.The output is stored in 'output.avi' file.
-outv = cv.VideoWriter(
+out_video = cv.VideoWriter(
     str(FILE_OUTPUT),
     cv.VideoWriter_fourcc("M", "J", "P", "G"),
     10,
@@ -122,13 +125,10 @@ def load_model(checkpoint):
 def enchance_image(frame):
     temp_img = frame
     img_wb = wb.balanceWhite(temp_img)
-
     img_lab = cv.cvtColor(img_wb, cv.COLOR_BGR2Lab)
-
     l, a, b = cv.split(img_lab)
     img_l = clahe.apply(l)
     img_clahe = cv.merge((img_l, a, b))
-
     frame = cv.cvtColor(img_clahe, cv.COLOR_Lab2BGR)
     return frame
 
@@ -137,7 +137,7 @@ def check_detections(preds):
     return None
 
 
-def postprocess(frame, classId, score, bbox):
+def postprocess(frame, class_id, score, bbox):
     if score > THREASHOLD:
         left = bbox[1] * cols
         top = bbox[0] * rows
@@ -152,14 +152,14 @@ def postprocess(frame, classId, score, bbox):
         )
         label = "%.2f" % score
         if classes:
-            assert classId < len(classes)
-            label = "%s:%s" % (classes[classId], label)
-        labelSize, baseLine = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        top = max(top, labelSize[1])
+            assert class_id < len(classes)
+            label = "%s:%s" % (classes[class_id], label)
+        label_size, base_line = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        top = max(top, label_size[1])
         cv.rectangle(
             frame,
-            (int(left), int(top - round(1.5 * labelSize[1]))),
-            (int(left + round(1.5 * labelSize[0])), int(top + baseLine)),
+            (int(left), int(top - round(1.5 * label_size[1]))),
+            (int(left + round(1.5 * label_size[0])), int(top + base_line)),
             (255, 255, 255),
             cv.FILLED,
         )
@@ -186,12 +186,17 @@ def write_raw_video(frames):
 def calculate_stats(n_frames, detections):
     print("[INFO] :: Video length {} frames".format(n_frames))
     avg_score = []
-    #[item for sublist in l for item in sublist]
-    avg_score = [score for subscore in detections["scores"] for score in subscore if score > THREASHOLD]
+    # [item for sublist in l for item in sublist]
+    avg_score = [
+        score
+        for subscore in detections["scores"]
+        for score in subscore
+        if score > THREASHOLD
+    ]
     print("[INFO] :: Average score is {}".format(mean(avg_score)))
-    avg_detect = sum(detections["numbers"])
-    print("[INFO] :: Number of detections is {}".format(avg_detect))
-    print("[INFO] :: Average detections on frame is {0}".format(avg_detect/n_frames))
+    avg_detect = len(avg_score)
+    print("[INFO] :: Number of meaningful detections is {}".format(avg_detect))
+    print("[INFO] :: Average detections on frame is {0}".format(avg_detect / n_frames))
 
 
 detection_graph = None
@@ -207,43 +212,27 @@ print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
 # exit()
 
 
-
-
-
 with detection_graph.as_default():
     with tf.Session(graph=detection_graph) as sess:
-
         n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-        
         i = 0
+        start_time = time.time()
         while cap.isOpened():
             # Capture frame-by-frame
-            ret, img = cap.read()
-            
+            ret, frame = cap.read()
 
-            # Read and preprocess an image.
-            # img = cv.imread("rackoon_2.png")
+            if frame is not None:
+                print ("[INFO] :: Detecting frame {0}".format(i))
+                if ENABLE_ENCHANCER:
+                    try:
+                        frame = enchance_image(frame)
+                    except Exception as e:
+                        print("[ERROR] :: " + e)
 
-            if img is not None:
-
-                try:
-                   img = enchance_image(img)
-                except Exception as e:
-                   print("[ERROR] :: " + e)
-                rows = img.shape[0]
-                cols = img.shape[1]
-                inp = cv.resize(img, (300, 300))
+                rows = frame.shape[0]
+                cols = frame.shape[1]
+                inp = cv.resize(frame, (300, 300))
                 inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
-
-
-                # # Actual detection
-                # (box, score, clss, num_detections) = sess.run(
-                #         [box, score, clss, num_detections],
-                #         feed_dict={image_tensor: imageNP_expanded})
-
-                # boxes.append(box)
-                # scores.append(score)
-                # classes.append(clss)
 
                 # Run the model
                 out = sess.run(
@@ -268,40 +257,39 @@ with detection_graph.as_default():
                 detections["numbers"].append(num_detections)
 
                 for i in range(num_detections):
-                    classId = int(out[3][0][i])
+                    class_id = int(out[3][0][i])
                     score = float(out[1][0][i])
                     bbox = [float(v) for v in out[2][0][i]]
 
-                    img = postprocess(img, classId, score, bbox)
-           
+                    frame = postprocess(frame, class_id, score, bbox)
+
             if ret == True:
                 # Saves for video
-                # img = image_resize(img, width=800)
-                # img = enchance_image(img)
+                frame = image_resize(frame, width=800)
+                frame = enchance_image(frame)
 
-                outv.write(img)
+                out_video.write(frame)
 
                 # Display the resulting frame
-                cv.imshow("Charving Detection", img)
-                i+=1
+                cv.imshow(
+                    "Animals Detection. Frame {0} out of {1}".format(i, n_frames), frame
+                )
+                i += 1
                 # Close window when "Q" button pressed
                 if cv.waitKey(1) & 0xFF == ord("q"):
                     break
-                
+
             else:
-                print("File ended")
-                
-                calculate_stats(n_frames,detections)
+                print("[INFO] :: File {0} ended".format(FILE_INPUT))
+                elapsed = time.time() - start_time
+                print(
+                    "[INFO] :: Detection took {}".format(humanfriendly.format_timespan(elapsed))
+                )
+                calculate_stats(n_frames, detections)
                 break
 
-        # cv.rectangle(frame, (left, top), (right, bottom), (255, 178, 50), 3)
-
-        # Get the label for the class name and its confidence
-
-        # Display the label at the top of the bounding box
-
         cap.release()
-        outv.release()
+        out_video.release()
 
 
 # if __name__ == "__main__":
