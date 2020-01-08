@@ -1,6 +1,9 @@
+import argparse
+import glob
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path, PurePath
 from pprint import pprint
 from statistics import mean
@@ -10,14 +13,17 @@ import humanfriendly
 import numpy as np
 import tensorflow as tf
 
-THREASHOLD = 0.5
+DEFAULT_CONFIDENCE_THRESHOLD = 0.5
+DETECTION_FILENAME_INSERT = '_detections'
 
 # Don't enable. Makes things worse.
 ENABLE_ENCHANCER = False
 
 
 def get_output_file(input_file):
-    return Path(PurePath(input_file).stem + ".avi")
+    return Path(
+        PurePath(input_file).stem + datetime.now().strftime("_%H_%M_%d_%m_%Y") + ".avi"
+    )
 
 
 def image_resize(image, width=None, height=None, inter=cv.INTER_LANCZOS4):
@@ -45,11 +51,7 @@ def image_resize(image, width=None, height=None, inter=cv.INTER_LANCZOS4):
         r = width / float(w)
         dim = (width, int(h * r))
 
-    # resize the image
-    resized = cv.resize(image, dim, interpolation=inter)
-
-    # return the resized image
-    return resized
+    return cv.resize(image, dim, interpolation=inter)
 
 
 clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
@@ -57,7 +59,7 @@ clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 wb = cv.xphoto.createSimpleWB()
 wb.setP(0.3)
 
-FILE_INPUT = "cat_2.mp4"
+FILE_INPUT = "cat.mp4"
 FILE_OUTPUT = get_output_file(FILE_INPUT)
 
 # Checks and deletes the output file
@@ -66,6 +68,7 @@ if os.path.isfile(FILE_OUTPUT):
     os.remove(FILE_OUTPUT)
 
 # Playing video from file
+print("[INFO] :: Opening file {0}".format(FILE_INPUT))
 cap = cv.VideoCapture(FILE_INPUT)
 
 # Default resolutions of the frame are obtained.The default resolutions are system dependent.
@@ -74,6 +77,7 @@ frame_width = int(cap.get(3))
 frame_height = int(cap.get(4))
 
 # Define the codec and create VideoWriter object.The output is stored in 'output.avi' file.
+print("[INFO] :: Writing to file {0}".format(FILE_OUTPUT))
 out_video = cv.VideoWriter(
     str(FILE_OUTPUT),
     cv.VideoWriter_fourcc("M", "J", "P", "G"),
@@ -129,8 +133,7 @@ def enchance_image(frame):
     l, a, b = cv.split(img_lab)
     img_l = clahe.apply(l)
     img_clahe = cv.merge((img_l, a, b))
-    frame = cv.cvtColor(img_clahe, cv.COLOR_Lab2BGR)
-    return frame
+    return cv.cvtColor(img_clahe, cv.COLOR_Lab2BGR)
 
 
 def check_detections(preds):
@@ -138,7 +141,9 @@ def check_detections(preds):
 
 
 def postprocess(frame, class_id, score, bbox):
-    if score > THREASHOLD:
+    frame = image_resize(frame, width=800)
+    # frame = enchance_image(frame)
+    if score > DEFAULT_CONFIDENCE_THRESHOLD:
         left = bbox[1] * cols
         top = bbox[0] * rows
         right = bbox[3] * cols
@@ -191,12 +196,101 @@ def calculate_stats(n_frames, detections):
         score
         for subscore in detections["scores"]
         for score in subscore
-        if score > THREASHOLD
+        if score > DEFAULT_CONFIDENCE_THRESHOLD
     ]
     print("[INFO] :: Average score is {}".format(mean(avg_score)))
     avg_detect = len(avg_score)
     print("[INFO] :: Number of meaningful detections is {}".format(avg_detect))
-    print("[INFO] :: Average detections on frame is {0}".format(avg_detect / n_frames))
+    print("[INFO] :: Average detections per frame is {0}".format(avg_detect / n_frames))
+
+def find_videos(*kwargs):
+    return []
+
+def load_and_run_detector(
+    model_file, video_file_names, confidence_threshold, output_dir,
+):
+    model_file = "megadetector_v3.pb"
+
+
+def main():
+
+    # python run_tf_detector.py "D:\temp\models\object_detection\megadetector\megadetector_v2.pb" --video "D:\temp\demo_images\test\S1_J08_R1_PICT0120.JPG"
+    # python run_tf_detector.py "D:\temp\models\object_detection\megadetector\megadetector_v2.pb" --videos "d:\temp\demo_images\test"
+    # python run_tf_detector.py "d:\temp\models\megadetector_v3.pb" --videos "d:\temp\test\in" --outputDir "d:\temp\test\out"
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("detector_file", type=str)
+    parser.add_argument(
+        "--videos",
+        action="store",
+        type=str,
+        default="",
+        help="Directory to search for videos, with optional recursion",
+    )
+    parser.add_argument(
+        "--video",
+        action="store",
+        type=str,
+        default="",
+        help="Single file to process, mutually exclusive with videos",
+    )
+    parser.add_argument(
+        "--threshold",
+        action="store",
+        type=float,
+        default=DEFAULT_CONFIDENCE_THRESHOLD,
+        help="Confidence threshold, don't render boxes below this confidence",
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Recurse into directories, only meaningful if using --videos",
+    )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force CPU detection, even if a GPU is available",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Directory for output videos (defaults to same as input)",
+    )
+
+    if len(sys.argv[1:]) == 0:
+        parser.print_help()
+        parser.exit()
+
+    args = parser.parse_args()
+
+    if len(args.video) > 0 and len(args.videos) > 0:
+        raise Exception("Cannot specify both video file and videos dir")
+    elif len(args.video) == 0 and len(args.videos) == 0:
+        raise Exception("Must specify either an video file or an videos directory")
+
+    if len(args.video) > 0:
+        video_file_names = [args.video]
+    else:
+        video_file_names = find_videos(args.videos, args.recursive)
+
+    if args.forceCpu:
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+    # Hack to avoid running on already-detected images
+    video_file_names = [
+        x for x in video_file_names if DETECTION_FILENAME_INSERT not in x
+    ]
+
+    print("Running detector on {} images".format(len(video_file_names)))
+
+    load_and_run_detector(
+        model_file=args.detectorFile,
+        video_file_names=video_file_names,
+        confidence_threshold=args.threshold,
+        output_dir=args.outputDir,
+    )
 
 
 detection_graph = None
@@ -209,20 +303,21 @@ elapsed = time.time() - start_time
 print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
 
 
-# exit()
-
-
 with detection_graph.as_default():
     with tf.Session(graph=detection_graph) as sess:
         n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-        i = 0
+        f = 0
         start_time = time.time()
         while cap.isOpened():
             # Capture frame-by-frame
             ret, frame = cap.read()
 
             if frame is not None:
-                print ("[INFO] :: Detecting frame {0}".format(i))
+                print(
+                    "[INFO] :: Detecting frame {0} out of {1}. Progress {2}%".format(
+                        f, n_frames, round(f / n_frames * 100)
+                    )
+                )
                 if ENABLE_ENCHANCER:
                     try:
                         frame = enchance_image(frame)
@@ -265,25 +360,25 @@ with detection_graph.as_default():
 
             if ret == True:
                 # Saves for video
-                frame = image_resize(frame, width=800)
-                frame = enchance_image(frame)
-
                 out_video.write(frame)
 
                 # Display the resulting frame
                 cv.imshow(
-                    "Animals Detection. Frame {0} out of {1}".format(i, n_frames), frame
+                    "Animals Detection. Frames number {0}".format(n_frames), frame
                 )
-                i += 1
+                f += 1
                 # Close window when "Q" button pressed
                 if cv.waitKey(1) & 0xFF == ord("q"):
+                    print("[WARN] :: Exiting on button Q pressed")
                     break
 
             else:
                 print("[INFO] :: File {0} ended".format(FILE_INPUT))
                 elapsed = time.time() - start_time
                 print(
-                    "[INFO] :: Detection took {}".format(humanfriendly.format_timespan(elapsed))
+                    "[INFO] :: Detection took {}".format(
+                        humanfriendly.format_timespan(elapsed)
+                    )
                 )
                 calculate_stats(n_frames, detections)
                 break
