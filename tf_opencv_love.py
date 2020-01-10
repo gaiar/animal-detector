@@ -82,10 +82,7 @@ frame_height = int(cap.get(4))
 
 # Define the codec and create VideoWriter object.The output is stored in 'output.avi' file.
 print("[INFO] :: Writing to file {0}".format(FILE_OUTPUT))
-
 fourcc = cv.VideoWriter_fourcc(*"mp4v")
-
-
 out_video = cv.VideoWriter(str(FILE_OUTPUT), fourcc, fps, (frame_width, frame_height),)
 
 sys.path.append("..")
