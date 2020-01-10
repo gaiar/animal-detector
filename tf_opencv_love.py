@@ -14,7 +14,8 @@ import numpy as np
 import tensorflow as tf
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
-DETECTION_FILENAME_INSERT = '_detections'
+DETECTION_FILENAME_INSERT = "_detections"
+DISPLAY_RESULTS = False
 
 # Don't enable. Makes things worse.
 ENABLE_ENCHANCER = False
@@ -22,7 +23,8 @@ ENABLE_ENCHANCER = False
 
 def get_output_file(input_file):
     return Path(
-        PurePath(input_file).stem + datetime.now().strftime("_%H_%M_%d_%m_%Y") + ".avi"
+        "out/",
+        PurePath(input_file).stem + datetime.now().strftime("_%H_%M_%d_%m_%Y") + ".mp4",
     )
 
 
@@ -59,7 +61,7 @@ clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 wb = cv.xphoto.createSimpleWB()
 wb.setP(0.3)
 
-FILE_INPUT = "cat.mp4"
+FILE_INPUT = "cat_3.mp4"
 FILE_OUTPUT = get_output_file(FILE_INPUT)
 
 # Checks and deletes the output file
@@ -71,6 +73,8 @@ if os.path.isfile(FILE_OUTPUT):
 print("[INFO] :: Opening file {0}".format(FILE_INPUT))
 cap = cv.VideoCapture(FILE_INPUT)
 
+n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+fps = cap.get(cv.CAP_PROP_FPS)
 # Default resolutions of the frame are obtained.The default resolutions are system dependent.
 # We convert the resolutions from float to integer.
 frame_width = int(cap.get(3))
@@ -78,12 +82,11 @@ frame_height = int(cap.get(4))
 
 # Define the codec and create VideoWriter object.The output is stored in 'output.avi' file.
 print("[INFO] :: Writing to file {0}".format(FILE_OUTPUT))
-out_video = cv.VideoWriter(
-    str(FILE_OUTPUT),
-    cv.VideoWriter_fourcc("M", "J", "P", "G"),
-    10,
-    (frame_width, frame_height),
-)
+
+fourcc = cv.VideoWriter_fourcc(*"mp4v")
+
+
+out_video = cv.VideoWriter(str(FILE_OUTPUT), fourcc, fps, (frame_width, frame_height),)
 
 sys.path.append("..")
 
@@ -100,11 +103,7 @@ detections["classes"] = []
 detections["scores"] = []
 detections["boxes"] = []
 detections["numbers"] = []
-
-# boxes.append(box)
-# scores.append(score)
-# classes.append(clss)
-
+detections["frames"] = []
 
 for cat in bbox_categories:
     classes[int(cat["id"])] = cat["name"]
@@ -140,8 +139,47 @@ def check_detections(preds):
     return None
 
 
+def postprocess_all(detections, n_frames):
+    print(
+        "[INFO] :: Going through {0} detections and {1} frames".format(
+            len(detections["frames"]), n_frames
+        )
+    )
+    print(
+        "[DEBUG] :: Length Classes: {0}, Length Scores: {1}, Length Boxes: {2}, Length Frames: {3}".format(
+            len(detections["classes"]),
+            len(detections["scores"]),
+            len(detections["boxes"]),
+            len(detections["frames"]),
+        ),
+    )
+    n_frames = len(detections["frames"])
+    for i in range(n_frames):
+        classes = detections["classes"][i]
+        scores = detections["scores"][i]
+        bboxes = detections["boxes"][i]
+        num_detections = detections["numbers"][i]
+        frame = detections["frames"][i]
+
+        for j in range(num_detections):
+            class_id = int(classes[j])
+            score = float(scores[j])
+            bbox = [float(v) for v in bboxes[j]]
+            frame = postprocess(frame, class_id, score, bbox)
+        # print("[DEBUG] :: Writing to file frame {0}".format(i))
+        out_video.write(frame)
+
+        if DISPLAY_RESULTS:
+            # Display the resulting frame
+            cv.imshow("Animals Detection. Frames number {0}".format(n_frames), frame)
+            # Close window when "Q" button pressed
+            if cv.waitKey(1) & 0xFF == ord("q"):
+                print("[WARN] :: Exiting on button Q pressed")
+                break
+
+
 def postprocess(frame, class_id, score, bbox):
-    frame = image_resize(frame, width=800)
+    # frame = image_resize(frame, width=800)
     # frame = enchance_image(frame)
     if score > DEFAULT_CONFIDENCE_THRESHOLD:
         left = bbox[1] * cols
@@ -159,6 +197,7 @@ def postprocess(frame, class_id, score, bbox):
         if classes:
             assert class_id < len(classes)
             label = "%s:%s" % (classes[class_id], label)
+            # print("[DEBUG] :: Found {0}".format(label))
         label_size, base_line = cv.getTextSize(label, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         top = max(top, label_size[1])
         cv.rectangle(
@@ -184,8 +223,19 @@ def draw_predictions(classId, conf, left, top, right, bottom):
     pass
 
 
-def write_raw_video(frames):
-    pass
+# def write_raw_video(frames):
+#     # Saves for video
+#     for frame in frames:
+#         out_video.write(frame)
+
+#         # # Display the resulting frame
+#         # cv.imshow(
+#         #     "Animals Detection. Frames number {0}".format(n_frames), frame
+#         # )
+#         # # Close window when "Q" button pressed
+#         # if cv.waitKey(1) & 0xFF == ord("q"):
+#         #     print("[WARN] :: Exiting on button Q pressed")
+#         #     break
 
 
 def calculate_stats(n_frames, detections):
@@ -202,9 +252,12 @@ def calculate_stats(n_frames, detections):
     avg_detect = len(avg_score)
     print("[INFO] :: Number of meaningful detections is {}".format(avg_detect))
     print("[INFO] :: Average detections per frame is {0}".format(avg_detect / n_frames))
+    return avg_score, avg_detect
+
 
 def find_videos(*kwargs):
     return []
+
 
 def load_and_run_detector(
     model_file, video_file_names, confidence_threshold, output_dir,
@@ -343,35 +396,26 @@ with detection_graph.as_default():
                 )
 
                 # Visualize detected bounding boxes.
-                # pprint(out)
+
                 num_detections = int(out[0][0])
 
                 detections["scores"].append(out[1][0])
                 detections["classes"].append(out[3][0])
                 detections["boxes"].append(out[2][0])
                 detections["numbers"].append(num_detections)
+                detections["frames"].append(frame)
 
-                for i in range(num_detections):
-                    class_id = int(out[3][0][i])
-                    score = float(out[1][0][i])
-                    bbox = [float(v) for v in out[2][0][i]]
+                # for i in range(num_detections):
+                #     class_id = int(out[3][0][i])
+                #     score = float(out[1][0][i])
+                #     bbox = [float(v) for v in out[2][0][i]]
 
-                    frame = postprocess(frame, class_id, score, bbox)
+                #     frame = postprocess(frame, class_id, score, bbox)
+            else:
+                print("[DEBUG] :: Skipping empty frame {}".format(f))
 
             if ret == True:
-                # Saves for video
-                out_video.write(frame)
-
-                # Display the resulting frame
-                cv.imshow(
-                    "Animals Detection. Frames number {0}".format(n_frames), frame
-                )
                 f += 1
-                # Close window when "Q" button pressed
-                if cv.waitKey(1) & 0xFF == ord("q"):
-                    print("[WARN] :: Exiting on button Q pressed")
-                    break
-
             else:
                 print("[INFO] :: File {0} ended".format(FILE_INPUT))
                 elapsed = time.time() - start_time
@@ -380,7 +424,12 @@ with detection_graph.as_default():
                         humanfriendly.format_timespan(elapsed)
                     )
                 )
-                calculate_stats(n_frames, detections)
+                avg_score, avg_detect = calculate_stats(n_frames, detections)
+                if avg_detect > 1:
+                    postprocess_all(detections, n_frames)
+                else:
+                    print("[WARN] :: Nothing meaningful found on video")
+                # write_raw_video(frames)
                 break
 
         cap.release()
