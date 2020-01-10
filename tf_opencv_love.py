@@ -12,6 +12,11 @@ import cv2 as cv
 import humanfriendly
 import numpy as np
 import tensorflow as tf
+from tqdm import tqdm, trange
+import gc
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR )
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 DETECTION_FILENAME_INSERT = "_detections"
@@ -19,6 +24,11 @@ DISPLAY_RESULTS = False
 
 # Don't enable. Makes things worse.
 ENABLE_ENCHANCER = False
+
+clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+wb = cv.xphoto.createSimpleWB()
+wb.setP(0.3)
 
 
 def get_output_file(input_file):
@@ -56,36 +66,34 @@ def image_resize(image, width=None, height=None, inter=cv.INTER_LANCZOS4):
     return cv.resize(image, dim, interpolation=inter)
 
 
-clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-
-wb = cv.xphoto.createSimpleWB()
-wb.setP(0.3)
-
-FILE_INPUT = "cat_3.mp4"
-FILE_OUTPUT = get_output_file(FILE_INPUT)
+# FILE_INPUT = "cat_3.mp4"
+# FILE_OUTPUT = get_output_file(FILE_INPUT)
 
 # Checks and deletes the output file
 # You cant have a existing file or it will through an error
-if os.path.isfile(FILE_OUTPUT):
-    os.remove(FILE_OUTPUT)
+# if os.path.isfile(FILE_OUTPUT):
+#     os.remove(FILE_OUTPUT)
 
-# Playing video from file
-print("[INFO] :: Opening file {0}".format(FILE_INPUT))
-cap = cv.VideoCapture(FILE_INPUT)
+# # Playing video from file
+# print("[INFO] :: Opening file {0}".format(FILE_INPUT))
+# cap = cv.VideoCapture(FILE_INPUT)
 
-n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-fps = cap.get(cv.CAP_PROP_FPS)
-# Default resolutions of the frame are obtained.The default resolutions are system dependent.
-# We convert the resolutions from float to integer.
-frame_width = int(cap.get(3))
-frame_height = int(cap.get(4))
+# n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+# fps = cap.get(cv.CAP_PROP_FPS)
+# # Default resolutions of the frame are obtained.The default resolutions are system dependent.
+# # We convert the resolutions from float to integer.
+# frame_width = int(cap.get(3))
+# frame_height = int(cap.get(4))
 
 # Define the codec and create VideoWriter object.The output is stored in 'output.avi' file.
-print("[INFO] :: Writing to file {0}".format(FILE_OUTPUT))
-fourcc = cv.VideoWriter_fourcc(*"mp4v")
-out_video = cv.VideoWriter(str(FILE_OUTPUT), fourcc, fps, (frame_width, frame_height),)
+# print("[INFO] :: Writing to file {0}".format(FILE_OUTPUT))
+# fourcc = cv.VideoWriter_fourcc(*"mp4v")
+# out_video = cv.VideoWriter(str(FILE_OUTPUT), fourcc, fps, (frame_width, frame_height),)
 
 sys.path.append("..")
+
+image_extensions = [".jpg", ".jpeg", ".gif", ".png"]
+video_extensions = [".mp4", ".mov", ".avi", ".mkv"]
 
 classes = {}
 bbox_categories = [
@@ -136,7 +144,7 @@ def check_detections(preds):
     return None
 
 
-def postprocess_all(detections, n_frames):
+def postprocess_all(detections, n_frames, out_video):
     print(
         "[INFO] :: Going through {0} detections and {1} frames".format(
             len(detections["frames"]), n_frames
@@ -151,7 +159,7 @@ def postprocess_all(detections, n_frames):
         ),
     )
     n_frames = len(detections["frames"])
-    for i in range(n_frames):
+    for i in tqdm(range(n_frames)):
         classes = detections["classes"][i]
         scores = detections["scores"][i]
         bboxes = detections["boxes"][i]
@@ -173,11 +181,14 @@ def postprocess_all(detections, n_frames):
             if cv.waitKey(1) & 0xFF == ord("q"):
                 print("[WARN] :: Exiting on button Q pressed")
                 break
-
-
+    del detections
+    gc.collect()
+    
 def postprocess(frame, class_id, score, bbox):
     # frame = image_resize(frame, width=800)
     # frame = enchance_image(frame)
+    rows = frame.shape[0]
+    cols = frame.shape[1]
     if score > DEFAULT_CONFIDENCE_THRESHOLD:
         left = bbox[1] * cols
         top = bbox[0] * rows
@@ -252,14 +263,201 @@ def calculate_stats(n_frames, detections):
     return avg_score, avg_detect
 
 
-def find_videos(*kwargs):
-    return []
+def is_image_file(s):
+    """
+    Check a file's extension against a hard-coded set of image file extensions    '
+    """
+    ext = os.path.splitext(s)[1]
+    return ext.lower() in image_extensions
+
+
+def is_video_file(s):
+    """
+    Check a file's extension against a hard-coded set of image file extensions    '
+    """
+    ext = os.path.splitext(s)[1]
+    return ext.lower() in video_extensions
+
+
+# def find_image_strings(strings):
+#     """
+#     Given a list of strings that are potentially image file names, look for strings
+#     that actually look like image file names (based on extension).
+#     """
+#     files = []
+#     for iString, f in enumerate(strings):
+
+
+#         bIsImage[iString] = is_image_file(f)
+#         if bIsImage[iString]:
+#             files.append(f)
+
+#     return files
+
+
+def find_video_strings(strings):
+    """
+    Given a list of strings that are potentially image file names, look for strings
+    that actually look like image file names (based on extension).
+    """
+    files = []
+    for item in strings:
+        video_file = Path(item)
+        if video_file.exists() and is_video_file(video_file):
+            files.append(video_file)
+    return files
+
+
+# def find_images(dir_name,recursive=False):
+#     """
+#     Find all files in a directory that look like image file names
+#     """
+#     if recursive:
+#         strings = glob.glob(os.path.join(dir_name,'**','*.*'), recursive=True)
+#     else:
+#         strings = glob.glob(os.path.join(dir_name,'*.*'))
+
+#     imageStrings = find_image_strings(strings)
+
+#     return imageStrings
+
+
+def find_videos(dir_name, recursive=False):
+    if recursive:
+        strings = glob.glob(os.path.join(dir_name, "**", "*.*"), recursive=True)
+    else:
+        strings = glob.glob(os.path.join(dir_name, "*.*"))
+
+    return find_video_strings(strings)
 
 
 def load_and_run_detector(
     model_file, video_file_names, confidence_threshold, output_dir,
 ):
     model_file = "megadetector_v3.pb"
+    video_file_names = video_file_names
+    detection_graph = None
+
+    # Load and run detector on target images
+    print("Loading model...")
+    start_time = time.time()
+    if detection_graph is None:
+        detection_graph = load_model("megadetector_v3.pb")
+    elapsed = time.time() - start_time
+    print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
+
+    with detection_graph.as_default():
+
+        with tf.Session(graph=detection_graph) as sess:
+            # vfiles = tqdm(video_file_names)
+            for video_file in video_file_names:
+                # vfiles.set_description("Processing file {0}".format(str(video_file)))
+
+                cap = cv.VideoCapture(str(video_file))
+                fps = cap.get(cv.CAP_PROP_FPS)
+
+                # Default resolutions of the frame are obtained.The default resolutions are system dependent.
+                # We convert the resolutions from float to integer.
+                frame_width = int(cap.get(3))
+                frame_height = int(cap.get(4))
+
+                out_video_file = get_output_file(video_file)
+
+                # Define the codec and create VideoWriter object.The output is stored in 'output.avi' file.
+                # print("[INFO] :: Writing to file {0}".format(out_video_file))
+                fourcc = cv.VideoWriter_fourcc(*"mp4v")
+                out_video = cv.VideoWriter(
+                    str(out_video_file), fourcc, fps, (frame_width, frame_height),
+                )
+
+                n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+                detections = {}
+                detections["classes"] = []
+                detections["scores"] = []
+                detections["boxes"] = []
+                detections["numbers"] = []
+                detections["frames"] = []
+                f = 0
+                start_time = time.time()
+                fbar = trange(n_frames)
+                while cap.isOpened():
+                    with fbar:
+                        # Capture frame-by-frame
+                        ret, frame = cap.read()
+
+                        if frame is not None:
+                            print(
+                                "[INFO] :: Detecting frame {0} out of {1}. Progress {2}%".format(
+                                    f, n_frames, round(f / n_frames * 100)
+                                )
+                            )
+                            # fbar.set_description( Detecting frame {0} out of {1})
+                            if ENABLE_ENCHANCER:
+                                try:
+                                    frame = enchance_image(frame)
+                                except Exception as e:
+                                    print("[ERROR] :: " + e)
+
+                            rows = frame.shape[0]
+                            cols = frame.shape[1]
+                            inp = cv.resize(frame, (300, 300))
+                            inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
+
+                            # Run the model
+                            out = sess.run(
+                                [
+                                    sess.graph.get_tensor_by_name("num_detections:0"),
+                                    sess.graph.get_tensor_by_name("detection_scores:0"),
+                                    sess.graph.get_tensor_by_name("detection_boxes:0"),
+                                    sess.graph.get_tensor_by_name(
+                                        "detection_classes:0"
+                                    ),
+                                ],
+                                feed_dict={
+                                    "image_tensor:0": inp.reshape(
+                                        1, inp.shape[0], inp.shape[1], 3
+                                    )
+                                },
+                            )
+
+                            # Visualize detected bounding boxes.
+
+                            num_detections = int(out[0][0])
+
+                            detections["scores"].append(out[1][0])
+                            detections["classes"].append(out[3][0])
+                            detections["boxes"].append(out[2][0])
+                            detections["numbers"].append(num_detections)
+                            detections["frames"].append(frame)
+
+                        else:
+                            print("[DEBUG] :: Skipping empty frame {}".format(f))
+
+                        if ret is not True:
+                            print("[INFO] :: File {0} ended".format(video_file))
+                            elapsed = time.time() - start_time
+                            print(
+                                "[INFO] :: Detection took {}".format(
+                                    humanfriendly.format_timespan(elapsed)
+                                )
+                            )
+                            _, avg_detect = calculate_stats(n_frames, detections)
+                            if avg_detect > 1:
+                                out_video = cv.VideoWriter(
+                                    str(out_video_file),
+                                    fourcc,
+                                    fps,
+                                    (frame_width, frame_height),
+                                )
+                                postprocess_all(detections, n_frames, out_video)
+                            else:
+                                print("[WARN] :: Nothing meaningful found on video")
+                            break
+                        f += 1
+                        fbar.update(1)
+
+                cap.release()
+                out_video.release()
 
 
 def main():
@@ -324,114 +522,115 @@ def main():
     else:
         video_file_names = find_videos(args.videos, args.recursive)
 
-    if args.forceCpu:
+    if args.cpu:
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
     # Hack to avoid running on already-detected images
-    video_file_names = [
-        x for x in video_file_names if DETECTION_FILENAME_INSERT not in x
-    ]
+    # print(video_file_names)
+    # video_file_names = [
+    #     x for x in video_file_names if DETECTION_FILENAME_INSERT not in x
+    # ]
 
-    print("Running detector on {} images".format(len(video_file_names)))
+    print("Running detector on {} videos".format(len(video_file_names)))
 
     load_and_run_detector(
-        model_file=args.detectorFile,
+        model_file=args.detector_file,
         video_file_names=video_file_names,
         confidence_threshold=args.threshold,
-        output_dir=args.outputDir,
+        output_dir=args.output,
     )
 
 
-detection_graph = None
-# Load and run detector on target images
-print("Loading model...")
-start_time = time.time()
-if detection_graph is None:
-    detection_graph = load_model("megadetector_v3.pb")
-elapsed = time.time() - start_time
-print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
+# detection_graph = None
+# # Load and run detector on target images
+# print("Loading model...")
+# start_time = time.time()
+# if detection_graph is None:
+#     detection_graph = load_model("megadetector_v3.pb")
+# elapsed = time.time() - start_time
+# print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
 
 
-with detection_graph.as_default():
-    with tf.Session(graph=detection_graph) as sess:
-        n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
-        f = 0
-        start_time = time.time()
-        while cap.isOpened():
-            # Capture frame-by-frame
-            ret, frame = cap.read()
+# with detection_graph.as_default():
+#     with tf.Session(graph=detection_graph) as sess:
+#         n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+#         f = 0
+#         start_time = time.time()
+#         while cap.isOpened():
+#             # Capture frame-by-frame
+#             ret, frame = cap.read()
 
-            if frame is not None:
-                print(
-                    "[INFO] :: Detecting frame {0} out of {1}. Progress {2}%".format(
-                        f, n_frames, round(f / n_frames * 100)
-                    )
-                )
-                if ENABLE_ENCHANCER:
-                    try:
-                        frame = enchance_image(frame)
-                    except Exception as e:
-                        print("[ERROR] :: " + e)
+#             if frame is not None:
+#                 print(
+#                     "[INFO] :: Detecting frame {0} out of {1}. Progress {2}%".format(
+#                         f, n_frames, round(f / n_frames * 100)
+#                     )
+#                 )
+#                 if ENABLE_ENCHANCER:
+#                     try:
+#                         frame = enchance_image(frame)
+#                     except Exception as e:
+#                         print("[ERROR] :: " + e)
 
-                rows = frame.shape[0]
-                cols = frame.shape[1]
-                inp = cv.resize(frame, (300, 300))
-                inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
+#                 rows = frame.shape[0]
+#                 cols = frame.shape[1]
+#                 inp = cv.resize(frame, (300, 300))
+#                 inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
 
-                # Run the model
-                out = sess.run(
-                    [
-                        sess.graph.get_tensor_by_name("num_detections:0"),
-                        sess.graph.get_tensor_by_name("detection_scores:0"),
-                        sess.graph.get_tensor_by_name("detection_boxes:0"),
-                        sess.graph.get_tensor_by_name("detection_classes:0"),
-                    ],
-                    feed_dict={
-                        "image_tensor:0": inp.reshape(1, inp.shape[0], inp.shape[1], 3)
-                    },
-                )
+#                 # Run the model
+#                 out = sess.run(
+#                     [
+#                         sess.graph.get_tensor_by_name("num_detections:0"),
+#                         sess.graph.get_tensor_by_name("detection_scores:0"),
+#                         sess.graph.get_tensor_by_name("detection_boxes:0"),
+#                         sess.graph.get_tensor_by_name("detection_classes:0"),
+#                     ],
+#                     feed_dict={
+#                         "image_tensor:0": inp.reshape(1, inp.shape[0], inp.shape[1], 3)
+#                     },
+#                 )
 
-                # Visualize detected bounding boxes.
+#                 # Visualize detected bounding boxes.
 
-                num_detections = int(out[0][0])
+#                 num_detections = int(out[0][0])
 
-                detections["scores"].append(out[1][0])
-                detections["classes"].append(out[3][0])
-                detections["boxes"].append(out[2][0])
-                detections["numbers"].append(num_detections)
-                detections["frames"].append(frame)
+#                 detections["scores"].append(out[1][0])
+#                 detections["classes"].append(out[3][0])
+#                 detections["boxes"].append(out[2][0])
+#                 detections["numbers"].append(num_detections)
+#                 detections["frames"].append(frame)
 
-                # for i in range(num_detections):
-                #     class_id = int(out[3][0][i])
-                #     score = float(out[1][0][i])
-                #     bbox = [float(v) for v in out[2][0][i]]
+#                 # for i in range(num_detections):
+#                 #     class_id = int(out[3][0][i])
+#                 #     score = float(out[1][0][i])
+#                 #     bbox = [float(v) for v in out[2][0][i]]
 
-                #     frame = postprocess(frame, class_id, score, bbox)
-            else:
-                print("[DEBUG] :: Skipping empty frame {}".format(f))
+#                 #     frame = postprocess(frame, class_id, score, bbox)
+#             else:
+#                 print("[DEBUG] :: Skipping empty frame {}".format(f))
 
-            if ret == True:
-                f += 1
-            else:
-                print("[INFO] :: File {0} ended".format(FILE_INPUT))
-                elapsed = time.time() - start_time
-                print(
-                    "[INFO] :: Detection took {}".format(
-                        humanfriendly.format_timespan(elapsed)
-                    )
-                )
-                avg_score, avg_detect = calculate_stats(n_frames, detections)
-                if avg_detect > 1:
-                    postprocess_all(detections, n_frames)
-                else:
-                    print("[WARN] :: Nothing meaningful found on video")
-                # write_raw_video(frames)
-                break
+#             if ret == True:
+#                 f += 1
+#             else:
+#                 print("[INFO] :: File {0} ended".format(FILE_INPUT))
+#                 elapsed = time.time() - start_time
+#                 print(
+#                     "[INFO] :: Detection took {}".format(
+#                         humanfriendly.format_timespan(elapsed)
+#                     )
+#                 )
+#                 avg_score, avg_detect = calculate_stats(n_frames, detections)
+#                 if avg_detect > 1:
+#                     postprocess_all(detections, n_frames)
+#                 else:
+#                     print("[WARN] :: Nothing meaningful found on video")
+#                 # write_raw_video(frames)
+#                 break
 
-        cap.release()
-        out_video.release()
+#         cap.release()
+#         out_video.release()
 
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
