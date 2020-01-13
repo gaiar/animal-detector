@@ -15,10 +15,13 @@ import tensorflow as tf
 from tqdm import tqdm, trange
 import gc
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR )
 
-DEFAULT_CONFIDENCE_THRESHOLD = 0.5
+#tf.config.optimizer.set_jit(False)
+
+#os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+#tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
+DEFAULT_CONFIDENCE_THRESHOLD = 0.4
 DETECTION_FILENAME_INSERT = "_detections"
 DISPLAY_RESULTS = False
 
@@ -183,7 +186,8 @@ def postprocess_all(detections, n_frames, out_video):
                 break
     del detections
     gc.collect()
-    
+
+
 def postprocess(frame, class_id, score, bbox):
     # frame = image_resize(frame, width=800)
     # frame = enchance_image(frame)
@@ -256,7 +260,11 @@ def calculate_stats(n_frames, detections):
         for score in subscore
         if score > DEFAULT_CONFIDENCE_THRESHOLD
     ]
-    print("[INFO] :: Average score is {}".format(mean(avg_score)))
+    if len(avg_score) > 0:
+        print("[INFO] :: Average score is {}".format(mean(avg_score)))
+    else:
+        print("[INFO] :: Average score is {}".format(len(avg_score)))
+        
     avg_detect = len(avg_score)
     print("[INFO] :: Number of meaningful detections is {}".format(avg_detect))
     print("[INFO] :: Average detections per frame is {0}".format(avg_detect / n_frames))
@@ -354,21 +362,18 @@ def load_and_run_detector(
                 # vfiles.set_description("Processing file {0}".format(str(video_file)))
 
                 cap = cv.VideoCapture(str(video_file))
-                fps = cap.get(cv.CAP_PROP_FPS)
+                
 
                 # Default resolutions of the frame are obtained.The default resolutions are system dependent.
                 # We convert the resolutions from float to integer.
-                frame_width = int(cap.get(3))
-                frame_height = int(cap.get(4))
-
-                out_video_file = get_output_file(video_file)
+                
 
                 # Define the codec and create VideoWriter object.The output is stored in 'output.avi' file.
                 # print("[INFO] :: Writing to file {0}".format(out_video_file))
-                fourcc = cv.VideoWriter_fourcc(*"mp4v")
-                out_video = cv.VideoWriter(
-                    str(out_video_file), fourcc, fps, (frame_width, frame_height),
-                )
+
+                # out_video = cv.VideoWriter(
+                #     str(out_video_file), fourcc, fps, (frame_width, frame_height),
+                # )
 
                 n_frames = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
                 detections = {}
@@ -398,8 +403,8 @@ def load_and_run_detector(
                                 except Exception as e:
                                     print("[ERROR] :: " + e)
 
-                            rows = frame.shape[0]
-                            cols = frame.shape[1]
+                            #rows = frame.shape[0]
+                            #cols = frame.shape[1]
                             inp = cv.resize(frame, (300, 300))
                             inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
 
@@ -443,6 +448,12 @@ def load_and_run_detector(
                             )
                             _, avg_detect = calculate_stats(n_frames, detections)
                             if avg_detect > 1:
+                                #TODO: Pass to function all stuff about VideoWriter
+                                out_video_file = get_output_file(video_file)
+                                frame_width = int(cap.get(3))
+                                frame_height = int(cap.get(4))
+                                fps = cap.get(cv.CAP_PROP_FPS)
+                                fourcc = cv.VideoWriter_fourcc(*"mp4v")
                                 out_video = cv.VideoWriter(
                                     str(out_video_file),
                                     fourcc,
