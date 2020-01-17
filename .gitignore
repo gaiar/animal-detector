@@ -1,6 +1,7 @@
 *.mp4
 *.png
 *.avi
+*.jpg
 .vscode/*
 .idea/*
 *.pb
