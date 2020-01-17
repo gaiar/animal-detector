@@ -408,6 +408,15 @@ def load_and_run_detector(
                             detections["numbers"].append(num_detections)
                             detections["frames"].append(frame)
 
+                            if f==round(n_frames // 2):
+                                _ , temp_avg_detect = calculate_stats(n_frames, detections)
+                                print ("[INFO] :: Intermediate results. {0} detections at half of the video".format(temp_avg_detect))
+                                if not temp_avg_detect > 1:
+                                    print ("[WARN] :: Nothing found at half of the video. Stopping")
+                                    cap.release()
+                                    move_input_file(video_file)
+                                    break
+
                         else:
                             print("[DEBUG] :: Skipping empty frame {}".format(f))
 
