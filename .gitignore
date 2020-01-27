@@ -5,3 +5,11 @@
 .vscode/*
 .idea/*
 *.pb
+in/*
+out/*
+videos/*
+processed/*
+temp_videos/*
+__pycache__/*
+.ipynb_checkpoints/*
+megadetector/*

@@ -15,10 +15,18 @@ from matplotlib import pyplot as plt
 from PIL import Image
 import cv2 as cv2
 
-if tf.__version__ < '1.4.0':
-    raise ImportError('Please upgrade your tensorflow installation to v1.4.* or later!')
+NUM_PARALLEL_EXEC_UNITS = 6
 
-FILE_OUTPUT = '<PATH/TO/OUTPUT/VIDEO/NAME>.avi'
+os.environ["OMP_NUM_THREADS"] = str(NUM_PARALLEL_EXEC_UNITS)
+os.environ["KMP_BLOCKTIME"] = "30"
+os.environ["KMP_SETTINGS"] = "1"
+os.environ["KMP_AFFINITY"]= "granularity=fine,verbose,compact,1,0"
+
+
+sys.path.append("/home/gaiar/developer/models/research/")
+sys.path.append("/home/gaiar/developer/models/research/slim")
+
+FILE_OUTPUT = 'rackoon.avi'
 
 # Checks and deletes the output file
 # You cant have a existing file or it will through an error
@@ -26,7 +34,7 @@ if os.path.isfile(FILE_OUTPUT):
     os.remove(FILE_OUTPUT)
 
 # Playing video from file
-cap = cv2.VideoCapture('<PATH/TO/VIDEO/FILE.<mp4|avi|...>>')
+cap = cv2.VideoCapture('/home/gaiar/developer/megadetector/animals/fat_rackoon.mp4')
 
 # Default resolutions of the frame are obtained.The default resolutions are system dependent.
 # We convert the resolutions from float to integer.
@@ -45,10 +53,10 @@ from utils import label_map_util
 from utils import visualization_utils as vis_util
 
 # Model preparation
-MODEL_NAME = '<MODEL_NAME>'
+MODEL_NAME = 'faster_rcnn_resnet101_fgvc_2018_07_19'
 PATH_TO_CKPT = MODEL_NAME + '/frozen_inference_graph.pb'
-PATH_TO_LABELS = os.path.join('data', '<LABEL_NAME>.pbtxt')
-NUM_CLASSES = 2
+PATH_TO_LABELS = os.path.join('data', 'fgvc_2854_classes_label_map.pbtxt')
+NUM_CLASSES = 2854
 
 # Load a (frozen) Tensorflow model into memory.
 detection_graph = tf.Graph()

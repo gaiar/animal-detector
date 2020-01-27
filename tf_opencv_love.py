@@ -27,7 +27,7 @@ config.gpu_options.per_process_gpu_memory_fraction = 1.0
 # os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 # tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-DEFAULT_CONFIDENCE_THRESHOLD = 0.4
+DEFAULT_CONFIDENCE_THRESHOLD = 0.3
 BS = 2
 DETECTION_FILENAME_INSERT = "_detections"
 DISPLAY_RESULTS = False
@@ -41,9 +41,9 @@ wb = cv.xphoto.createSimpleWB()
 wb.setP(0.3)
 
 
-def get_output_file(input_file):
+def get_output_file(out_dir,input_file):
     return Path(
-        "out/",
+        out_dir,
         PurePath(input_file).stem + datetime.now().strftime("_%H_%M_%d_%m_%Y") + ".mp4",
     )
 
@@ -444,7 +444,7 @@ def load_and_run_detector(
             _, avg_detect = calculate_stats(n_frames, detections)
             if avg_detect > 5:
                 # TODO: Pass to function all stuff about VideoWriter
-                out_video_file = get_output_file(video_file)
+                out_video_file = get_output_file(output_dir,video_file)
                 frame_width = fvs.frame_width
                 frame_height = fvs.frame_height
                 # print(
@@ -453,6 +453,7 @@ def load_and_run_detector(
                 #     )
                 # )
                 fps = fvs.frame_rate
+                #fourcc = cv.VideoWriter_fourcc(*"hvc1")
                 fourcc = cv.VideoWriter_fourcc(*"mp4v")
                 out_video = cv.VideoWriter(
                     str(out_video_file), fourcc, fps, (frame_width, frame_height),
@@ -464,6 +465,10 @@ def load_and_run_detector(
 
             fvs.stop()
             move_input_file(video_file)
+            del detections
+            del frames
+            gc.collect()
+
             # break
 
 
