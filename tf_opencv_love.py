@@ -18,8 +18,7 @@ import shutil
 
 from filevideostream import FileVideoStream
 
-# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
-# tf.config.optimizer.set_jit(True)
+
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 config.gpu_options.per_process_gpu_memory_fraction = 1.0
@@ -35,13 +34,8 @@ DISPLAY_RESULTS = False
 # Don't enable. Makes things worse.
 ENABLE_ENCHANCER = False
 
-clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
-wb = cv.xphoto.createSimpleWB()
-wb.setP(0.3)
-
-
-def get_output_file(out_dir,input_file):
+def get_output_file(out_dir, input_file):
     return Path(
         out_dir,
         PurePath(input_file).stem + datetime.now().strftime("_%H_%M_%d_%m_%Y") + ".mp4",
@@ -125,6 +119,12 @@ def load_model(checkpoint):
 
 
 def enchance_image(frame):
+
+    clahe = cv.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+    wb = cv.xphoto.createSimpleWB()
+    wb.setP(0.3)
+
     temp_img = frame
     img_wb = wb.balanceWhite(temp_img)
     img_lab = cv.cvtColor(img_wb, cv.COLOR_BGR2Lab)
@@ -178,6 +178,88 @@ def postprocess_all(detections, n_frames, out_video):
                 break
     del detections
     gc.collect()
+
+
+def run_inference_on_video(fvs, video_file, sess):
+
+    n_frames = fvs.n_frames
+
+    detections = {}
+    detections["classes"] = []
+    detections["scores"] = []
+    detections["boxes"] = []
+    detections["numbers"] = []
+    detections["frames"] = []
+    f = 0
+
+    check_done = False
+    while fvs.running():
+        frames = fvs.get_batch(BS)
+
+        print(
+            "[INFO] :: Detecting frame {0} out of {1}. Progress {2}%".format(
+                f, n_frames, round(f / n_frames * 100)
+            )
+        )
+
+        image_np_list = []
+        for frame in frames:
+            inp = cv.resize(frame, (300, 300))
+            inp = inp[:, :, [2, 1, 0]]  # BGR2RGB      
+            #image_np_list.append(inp)
+            image_np_list.append(np.asarray(inp, np.uint8))
+        image_np_expanded = np.asarray(image_np_list)
+
+        # Run the model
+        batch_start_time = time.time()
+
+        outs = sess.run(
+            [
+                sess.graph.get_tensor_by_name("num_detections:0"),
+                sess.graph.get_tensor_by_name("detection_scores:0"),
+                sess.graph.get_tensor_by_name("detection_boxes:0"),
+                sess.graph.get_tensor_by_name("detection_classes:0"),
+            ],
+            feed_dict={"image_tensor:0": image_np_expanded},
+        )
+
+        elapsed_batch_time = time.time() - batch_start_time
+        print(
+            "[INFO] :: One batch detection took {0}".format(
+                humanfriendly.format_timespan(elapsed_batch_time)
+            )
+        )
+
+        for det in range(len(frames)):
+            try:
+                num_detections = int(outs[0][det])
+
+                detections["scores"].append(outs[1][det])
+                detections["classes"].append(outs[3][det])
+                detections["boxes"].append(outs[2][det])
+                detections["numbers"].append(num_detections)
+                detections["frames"].append(frames[det])
+            except Exception as e:
+                print("No more frames. {0}".format(e))
+                break
+
+        if f >= round(n_frames // 2) and not check_done:
+            check_done = True
+            _, temp_avg_detect = calculate_stats(n_frames, detections)
+            print(
+                "[INFO] :: Intermediate results. {0} detections at half of the video".format(
+                    temp_avg_detect
+                )
+            )
+            if not temp_avg_detect > 1:
+                print("[WARN] :: Nothing found at half of the video. Stopping")
+                break
+
+        f += BS
+
+    print("[INFO] :: File {0} ended".format(video_file))
+
+    return detections
 
 
 def postprocess(frame, class_id, score, bbox):
@@ -264,22 +346,6 @@ def is_video_file(s):
     return ext.lower() in video_extensions
 
 
-# def find_image_strings(strings):
-#     """
-#     Given a list of strings that are potentially image file names, look for strings
-#     that actually look like image file names (based on extension).
-#     """
-#     files = []
-#     for iString, f in enumerate(strings):
-
-
-#         bIsImage[iString] = is_image_file(f)
-#         if bIsImage[iString]:
-#             files.append(f)
-
-#     return files
-
-
 def find_video_strings(strings):
     """
     Given a list of strings that are potentially image file names, look for strings
@@ -291,21 +357,6 @@ def find_video_strings(strings):
         if video_file.exists() and is_video_file(video_file):
             files.append(video_file)
     return files
-
-
-# def find_images(dir_name,recursive=False):
-#     """
-#     Find all files in a directory that look like image file names
-#     """
-#     if recursive:
-#         strings = glob.glob(os.path.join(dir_name,'**','*.*'), recursive=True)
-#     else:
-#         strings = glob.glob(os.path.join(dir_name,'*.*'))
-
-#     imageStrings = find_image_strings(strings)
-
-#     return imageStrings
-
 
 def find_videos(dir_name, recursive=False):
     if recursive:
@@ -323,20 +374,17 @@ def load_and_run_detector(
     if not model_file:
         model_file = "megadetector/exported_model/frozen_inference_graph_optimized.pb"
     video_file_names = video_file_names
-    detection_graph = None
 
     # Load and run detector on target images
-    print("Loading model...")
-    start_time = time.time()
-    if detection_graph is None:
-        print("[DEBUG] :: Loading model {0}".format(model_file))
-        # detection_graph = load_model(model_file)
-    elapsed = time.time() - start_time
-    print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
+    print("[DEBUG] :: Loading model {0}".format(model_file))
 
     with tf.Session(graph=tf.Graph(), config=config) as sess:
-        graph = tf.get_default_graph()
+        # graph = tf.get_default_graph()
+        start_time = time.time()
         tf.saved_model.loader.load(sess, ["serve"], model_file)
+        elapsed = time.time() - start_time
+        print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
+
         # vfiles = tqdm(video_file_names)
         for video_file in video_file_names:
             # vfiles.set_description("Processing file {0}".format(str(video_file)))
@@ -345,96 +393,10 @@ def load_and_run_detector(
             time.sleep(1.0)
 
             n_frames = fvs.n_frames
-
-            detections = {}
-            detections["classes"] = []
-            detections["scores"] = []
-            detections["boxes"] = []
-            detections["numbers"] = []
-            detections["frames"] = []
-            f = 0
             start_time = time.time()
-            # fbar = trange(n_frames)
-            # while cap.isOpened():
-            check_done = False
-            while fvs.running():
-                # Capture frame-by-frame
-                # frame = fvs.read()
-                frames = fvs.get_batch(BS)
-                if frames is not None:
-                    print(
-                        "[INFO] :: Detecting frame {0} out of {1}. Progress {2}%".format(
-                            f, n_frames, round(f / n_frames * 100)
-                        )
-                    )
 
-                    # fbar.set_description( Detecting frame {0} out of {1})
-                    # resize_start_time = time.time()
+            detections = run_inference_on_video(fvs, video_file, sess)
 
-                    image_np_list = []
-                    for frame in frames:
-                        if frame is not None:
-                            inp = cv.resize(frame, (300, 300))
-                            inp = inp[:, :, [2, 1, 0]]  # BGR2RGB
-                            image_np_list.append(inp)
-                        else:
-                            print("[WARN] :: Skipping empty frame")
-                    image_np_expanded = np.asarray(image_np_list)
-
-                    # Run the model
-                    batch_start_time = time.time()
-
-                    outs = sess.run(
-                        [
-                            sess.graph.get_tensor_by_name("num_detections:0"),
-                            sess.graph.get_tensor_by_name("detection_scores:0"),
-                            sess.graph.get_tensor_by_name("detection_boxes:0"),
-                            sess.graph.get_tensor_by_name("detection_classes:0"),
-                        ],
-                        feed_dict={"image_tensor:0": image_np_expanded},
-                    )
-
-                    elapsed_batch_time = time.time() - batch_start_time
-                    print(
-                        "[INFO] :: One batch detection took {0}".format(
-                            humanfriendly.format_timespan(elapsed_batch_time)
-                        )
-                    )
-
-                    # Visualize detected bounding boxes.
-
-                    for det in range(len(frames)):
-                        try:
-                            num_detections = int(outs[0][det])
-
-                            detections["scores"].append(outs[1][det])
-                            detections["classes"].append(outs[3][det])
-                            detections["boxes"].append(outs[2][det])
-                            detections["numbers"].append(num_detections)
-                            detections["frames"].append(frames[det])
-                        except Exception as e:
-                            print("No more frames. {0}".format(e))
-                            break
-                    
-                    if f >= round(n_frames // 2) and not check_done:
-                        check_done = True
-                        _, temp_avg_detect = calculate_stats(n_frames, detections)
-                        print(
-                            "[INFO] :: Intermediate results. {0} detections at half of the video".format(
-                                temp_avg_detect
-                            )
-                        )
-                        if not temp_avg_detect > 1:
-                            print(
-                                "[WARN] :: Nothing found at half of the video. Stopping"
-                            )
-                            break
-                else:
-                    print("[DEBUG] :: Skipping empty frame {}".format(f))
-
-                f += BS
-
-            print("[INFO] :: File {0} ended".format(video_file))
             elapsed = time.time() - start_time
             print(
                 "[INFO] :: Detection took {}".format(
@@ -444,16 +406,11 @@ def load_and_run_detector(
             _, avg_detect = calculate_stats(n_frames, detections)
             if avg_detect > 5:
                 # TODO: Pass to function all stuff about VideoWriter
-                out_video_file = get_output_file(output_dir,video_file)
+                out_video_file = get_output_file(output_dir, video_file)
                 frame_width = fvs.frame_width
                 frame_height = fvs.frame_height
-                # print(
-                #     "[DEBUG] :: Frame size {0}x{1}".format(
-                #         frame_width, frame_height
-                #     )
-                # )
                 fps = fvs.frame_rate
-                #fourcc = cv.VideoWriter_fourcc(*"hvc1")
+                # fourcc = cv.VideoWriter_fourcc(*"hvc1")
                 fourcc = cv.VideoWriter_fourcc(*"mp4v")
                 out_video = cv.VideoWriter(
                     str(out_video_file), fourcc, fps, (frame_width, frame_height),
@@ -466,7 +423,7 @@ def load_and_run_detector(
             fvs.stop()
             move_input_file(video_file)
             del detections
-            del frames
+            # del frames
             gc.collect()
 
             # break
