@@ -334,7 +334,7 @@ def find_videos(dir_name, recursive=False):
 def load_and_run_detector(
     model_file, video_file_names, confidence_threshold, output_dir,
 ):
-    model_file = "megadetector_v3.pb"
+    #model_file = "megadetector_v3.pb"
     video_file_names = video_file_names
     detection_graph = None
 
@@ -342,7 +342,7 @@ def load_and_run_detector(
     print("Loading model...")
     start_time = time.time()
     if detection_graph is None:
-        detection_graph = load_model("megadetector_v3_orig.pb")
+        detection_graph = load_model(model_file)
     elapsed = time.time() - start_time
     print("Loaded model in {}".format(humanfriendly.format_timespan(elapsed)))
 
@@ -468,7 +468,7 @@ def load_and_run_detector(
                                 print("[WARN] :: Nothing meaningful found on video")
 
                             cap.release()
-                            move_input_file(video_file)
+                            #move_input_file(video_file)
                             break
                         f += 1
                         fbar.update(1)
